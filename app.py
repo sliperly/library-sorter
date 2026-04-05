@@ -15,7 +15,7 @@ from pathlib import Path
 
 from config import (SOURCES, NEW_ROOT, BOOK_EXTENSIONS,
                     ARCHIVE_EXTENSIONS, ALLOWED_LANGUAGES,
-                    CONFIDENCE_THRESHOLD)
+                    CONFIDENCE_THRESHOLD, CATEGORIES)
 from db import init_db, upsert_pending, get_pending, get_stats
 from db import mark_processed, mark_skipped, mark_error
 from extractor import extract_text
@@ -93,8 +93,14 @@ def process_file(row: dict, dry_run: bool) -> None:
         mark_skipped(str(source_path), reason, llm_raw)
         print(f"  [SKIP/{reason}] {source_path.name}")
         return
+    
+    if meta.category not in CATEGORIES:
+        mark_skipped(str(source_path),
+                 f"invalid_category:{meta.category}", llm_raw)
+        print(f"  [SKIP/invalid_category] {source_path.name}: {meta.category}")
+        return
 
-    # Строим путь назначения
+    #Строим путь назначения
     dest_dir = NEW_ROOT / meta.category
     new_name = build_filename(meta, source_path)
     dest_path = dest_dir / new_name
