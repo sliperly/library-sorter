@@ -106,3 +106,26 @@ def get_stats() -> dict:
             SELECT status, COUNT(*) as cnt FROM files GROUP BY status
         """).fetchall()
         return {row["status"]: row["cnt"] for row in rows}
+
+
+def mark_needs_deep(source_path: str) -> None:
+    """Пометить файл для глубокого анализа — пропустить на первом проходе."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE files SET status='needs_deep', processed_at=? WHERE source_path=?",
+            (datetime.now().isoformat(), source_path)
+        )
+
+
+def get_pending(limit: int = 100, include_deep: bool = False) -> list[sqlite3.Row]:
+    with get_conn() as conn:
+        if include_deep:
+            return conn.execute(
+                "SELECT * FROM files WHERE status IN ('pending','needs_deep') ORDER BY id LIMIT ?",
+                (limit,)
+            ).fetchall()
+        else:
+            return conn.execute(
+                "SELECT * FROM files WHERE status='pending' ORDER BY id LIMIT ?",
+                (limit,)
+            ).fetchall()
