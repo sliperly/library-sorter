@@ -25,8 +25,8 @@ SOURCES = [
 ]
 
 # --- Форматы книг для обработки ---
-BOOK_EXTENSIONS = {".pdf", ".djvu", ".djv", ".fb2", ".epub", ".mobi",
-                   ".doc", ".docx", ".rtf", ".chm", ".txt"}
+BOOK_EXTENSIONS = {".pdf", ".djvu", ".djv", ".fb2", ".epub", ".mobi"
+                   }
 
 # --- Архивы — пропускать, логировать ---
 ARCHIVE_EXTENSIONS = {".zip", ".rar", ".7z", ".tar", ".gz", ".bz2"}
