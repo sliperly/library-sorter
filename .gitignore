@@ -12,3 +12,12 @@ library.db
 rmlint*
 duplicates*
 *_inventory*
+
+# Backup files
+*.backup
+*.bak
+*.old
+
+# Environment
+.env
+.env.local
