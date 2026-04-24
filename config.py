@@ -1,17 +1,19 @@
+import os
+os.environ['NO_PROXY'] = 'localhost,127.0.0.1'
+
 from pathlib import Path
 from dotenv import load_dotenv
 import os
 
 load_dotenv()
 
-# --- Пути ---
-LIBRARY_ROOT = Path(os.getenv("LIBRARY_ROOT", "/mnt/library"))
-NEW_ROOT = Path(os.getenv("NEW_ROOT", str(LIBRARY_ROOT / "New")))
-DB_PATH = Path(os.getenv("DB_PATH",
-               str(Path.home() / "HomeNetMind/library_sorter/library.db")))
-TEMP_DIR = Path("/tmp/library_sorter")
+# --- Пути для Windows + сетевой диск ---
+LIBRARY_ROOT = Path(os.getenv("LIBRARY_ROOT", "Z:/"))
+NEW_ROOT = Path(os.getenv("NEW_ROOT", "Z:/New"))
+DB_PATH = Path(os.getenv("DB_PATH", "C:/Users/user/library_sorter/library.db"))
+TEMP_DIR = Path("C:/Temp/library_sorter")
 
-# --- Источники (в порядке обработки) ---
+# --- Источники ---
 SOURCES = [
     LIBRARY_ROOT / "!Литература на обработку",
     LIBRARY_ROOT / "Книги",
@@ -24,30 +26,18 @@ SOURCES = [
     LIBRARY_ROOT / "Языки",
 ]
 
-# --- Форматы книг для обработки ---
 BOOK_EXTENSIONS = {".pdf", ".djvu", ".djv", ".fb2", ".epub", ".mobi"}
-
-# --- Архивы — пропускать, логировать ---
 ARCHIVE_EXTENSIONS = {".zip", ".rar", ".7z", ".tar", ".gz", ".bz2"}
-
-# --- Языки для обработки ---
 ALLOWED_LANGUAGES = {"ru", "en", "de", "zh", "ja"}
 
-# --- LLM ---
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3.5:27b")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.85"))
+CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.70"))
 
-# --- Извлечение текста ---
-TEXT_EXTRACT_CHARS = 3000
+TEXT_EXTRACT_CHARS = 4000
 
-# --- Нагрузка на CPU ---
-TEMP_LIMIT = int(os.getenv("TEMP_LIMIT", "75"))
-CPU_LIMIT_NIGHT = int(os.getenv("CPU_LIMIT_NIGHT", "280"))
-CPU_LIMIT_DAY = int(os.getenv("CPU_LIMIT_DAY", "40"))
-
-# --- Структура новой библиотеки ---
 CATEGORIES = {
+
     "01_Техника/01_Машиностроение",
     "01_Техника/02_Авиация",
     "01_Техника/03_Ракетостроение_Космос",
