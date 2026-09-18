@@ -21,3 +21,5 @@ duplicates*
 # Environment
 .env
 .env.local
+poppler/
+poppler_bin/

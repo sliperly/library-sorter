@@ -1,29 +1,45 @@
 import os
 os.environ['NO_PROXY'] = 'localhost,127.0.0.1'
 
+import platform
 from pathlib import Path
 from dotenv import load_dotenv
-import os
 
-load_dotenv()
+load_dotenv(override=True)
 
-# --- Пути для Windows + сетевой диск ---
+# --- Пути: всё берётся из .env ---
 LIBRARY_ROOT = Path(os.getenv("LIBRARY_ROOT", "Z:/"))
-NEW_ROOT = Path(os.getenv("NEW_ROOT", "Z:/New"))
+NEW_ROOT = Path(os.getenv("NEW_ROOT", str(LIBRARY_ROOT / "New")))
+QUARANTINE_LANG_DIR = Path(os.getenv(
+    "QUARANTINE_LANG_DIR", str(LIBRARY_ROOT / "Карантин_Язык")
+))
 DB_PATH = Path(os.getenv("DB_PATH", "C:/Users/user/library_sorter/library.db"))
-TEMP_DIR = Path("C:/Temp/library_sorter")
+TEMP_DIR = Path(os.getenv(
+    "TEMP_DIR",
+    "C:/Temp/library_sorter" if platform.system() == "Windows" else "/tmp/library_sorter"
+))
+
+# --- Внешние бинарники — переопределяемы через .env ---
+DJVUTXT_BIN = os.getenv("DJVUTXT_BIN", "djvutxt")
+DDJVU_BIN = os.getenv(
+    "DDJVU_BIN",
+    "C:/Program Files (x86)/DjVuLibre/ddjvu.exe" if platform.system() == "Windows" else "ddjvu"
+)
+
+# Poppler (pdftotext/pdftoppm) — на Forge распакован локально в poppler_bin/,
+# не полагаемся на системный PATH.
+POPPLER_BIN_DIR = os.getenv("POPPLER_BIN_DIR", "")
+PDFTOTEXT_BIN = os.getenv(
+    "PDFTOTEXT_BIN",
+    str(Path(POPPLER_BIN_DIR) / "pdftotext.exe") if POPPLER_BIN_DIR else "pdftotext"
+)
+
+# --- OCR ---
+OCR_USE_GPU = os.getenv("OCR_USE_GPU", "true").lower() == "true"
 
 # --- Источники ---
 SOURCES = [
-    LIBRARY_ROOT / "!Литература на обработку",
-    LIBRARY_ROOT / "Книги",
-    LIBRARY_ROOT / "Книги IT",
-    LIBRARY_ROOT / "Журналы",
-    LIBRARY_ROOT / "Художественная литература",
-    LIBRARY_ROOT / "Для инженера",
-    LIBRARY_ROOT / "Стандарты",
-    LIBRARY_ROOT / "Электроника, электрика, радио",
-    LIBRARY_ROOT / "Языки",
+    LIBRARY_ROOT / "Книги на обработку",
 ]
 
 BOOK_EXTENSIONS = {".pdf", ".djvu", ".djv", ".fb2", ".epub", ".mobi"}
@@ -37,7 +53,6 @@ CONFIDENCE_THRESHOLD = float(os.getenv("CONFIDENCE_THRESHOLD", "0.70"))
 TEXT_EXTRACT_CHARS = 4000
 
 CATEGORIES = {
-
     "01_Техника/01_Машиностроение",
     "01_Техника/02_Авиация",
     "01_Техника/03_Ракетостроение_Космос",

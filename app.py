@@ -10,6 +10,7 @@ app.py — Library Sorter v3.0
 """
 import argparse
 import sys
+import shutil
 from pathlib import Path
 
 from config import (
@@ -54,8 +55,6 @@ def _isbn_to_metadata(isbn_data: ISBNBookData) -> BookMetadata:
     Конвертирует данные из Open Library в BookMetadata.
     Категорию нужно определить через LLM.
     """
-    # Для ISBN данных используем высокий confidence
-    # но категорию всё равно определяем через LLM
     return BookMetadata(
         identified=True,
         author_last=_parse_last_name(isbn_data.author),
@@ -73,37 +72,30 @@ def _classify_isbn_book(isbn_data: ISBNBookData, filename: str) -> str:
     Определяет категорию для книги найденной по ISBN.
     Использует subjects из Open Library + LLM если нужно.
     """
-    # Простая эвристика по subjects
     subjects_text = " ".join(isbn_data.subjects).lower()
-    
-    # Программирование
-    if any(kw in subjects_text for kw in 
+
+    if any(kw in subjects_text for kw in
            ["programming", "python", "javascript", "computer science"]):
         if "python" in subjects_text:
             return "02_IT/01_Python"
         return "02_IT/13_Прочие_языки"
-    
-    # История
+
     if any(kw in subjects_text for kw in ["history", "war", "military"]):
         return "06_История_Политика/01_История_Общая"
-    
-    # Физика/Математика
+
     if "physics" in subjects_text:
         return "03_Науки/03_Физика"
     if "mathematics" in subjects_text:
         return "03_Науки/01_Математика"
-    
-    # Художественная литература
-    if any(kw in subjects_text for kw in 
+
+    if any(kw in subjects_text for kw in
            ["fiction", "novel", "science fiction", "fantasy"]):
         if "science fiction" in subjects_text:
             return "08_Художественная/01_Фантастика"
         if "fantasy" in subjects_text:
             return "08_Художественная/02_Фэнтези"
         return "08_Художественная/06_Прочая_худлит"
-    
-    # Если не смогли определить — вернём _Unprocessed
-    # В будущем можно добавить LLM для точной классификации
+
     return "_Unprocessed"
 
 
@@ -135,25 +127,23 @@ def scan_sources(sources: list[Path]) -> int:
         if not source_dir.exists():
             print(f"[WARN] Источник не найден: {source_dir}")
             continue
-        
+
         print(f"[SCAN] {source_dir}")
         for path in source_dir.rglob("*"):
             if not path.is_file():
                 continue
-            
+
             ext = path.suffix.lower()
-            
-            # Пропускаем архивы и нежелательные форматы
+
             if ext in ARCHIVE_EXTENSIONS:
                 continue
-            
-            # Только книжные форматы
+
             if ext not in BOOK_EXTENSIONS:
                 continue
-            
+
             if upsert_pending(str(path)):
                 added += 1
-    
+
     print(f"[SCAN] Добавлено в очередь: {added} файлов")
     return added
 
@@ -173,7 +163,6 @@ def process_file(row: dict, dry_run: bool) -> None:
     source_path = Path(row["source_path"])
     ext = source_path.suffix.lower()
 
-    # Проверка существования файла
     if not source_path.exists():
         mark_error(str(source_path), "file_not_found")
         print(f"  [ERROR/not_found] {source_path.name}")
@@ -184,7 +173,7 @@ def process_file(row: dict, dry_run: bool) -> None:
     # ШАГ 1: Извлечение текста
     print(f"  [1/4] Извлечение текста...")
     text = extract_text(source_path)
-    
+
     if not text or len(text) < 100:
         mark_skipped(str(source_path), "no_text_extracted")
         print(f"  [SKIP/no_text] Не удалось извлечь текст")
@@ -195,32 +184,30 @@ def process_file(row: dict, dry_run: bool) -> None:
     # ШАГ 2: Поиск ISBN → Open Library
     print(f"  [2/4] Поиск ISBN...")
     isbn_data = search_isbn_in_text(text)
-    
+
     meta = None
     llm_raw = ""
-    
+
     if isbn_data:
-        # Найдено по ISBN
         print(f"  [ISBN] {isbn_data.title} — {isbn_data.author}")
-        
+
         meta = _isbn_to_metadata(isbn_data)
         category = _classify_isbn_book(isbn_data, source_path.name)
         meta.category = category
-        
+
         llm_raw = f"ISBN lookup: {isbn_data.title}"
-        
+
     else:
-        # ШАГ 3: LLM анализ
         print(f"  [3/4] Анализ через LLM...")
-        
+
         try:
             meta = analyze_book(source_path.name, text)
             llm_raw = meta.model_dump_json()
-            
+
             print(f"  [LLM] {meta.title or 'Unknown'} | "
                   f"conf={meta.confidence:.2f} | "
                   f"cat={meta.category}")
-            
+
         except Exception as e:
             mark_error(str(source_path), f"llm_error: {e}")
             print(f"  [ERROR/llm] {e}")
@@ -239,16 +226,21 @@ def process_file(row: dict, dry_run: bool) -> None:
         print(f"  [SKIP/lang] Язык не поддерживается: {meta.language}")
         return
 
-    # Проверка identified
+    # Проверка identified — истинный "не документ вовсе" физически уходит
+    # в _NeKnigi, а не остаётся висеть во входной папке навсегда.
     if not meta.identified:
         reason = meta.skip_reason or "not_identified"
+        dest_dir = OUTPUT_DIR_FOR_NEKNIGI()
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest_path = dest_dir / source_path.name
+        if not dry_run:
+            shutil.move(str(source_path), str(dest_path))
         mark_skipped(str(source_path), reason, llm_raw)
-        print(f"  [SKIP/{reason}]")
+        print(f"  [SKIP/{reason}] → _NeKnigi/{source_path.name}")
         return
 
     # Проверка confidence
     if meta.confidence < CONFIDENCE_THRESHOLD:
-        # Низкая уверенность → в _Unprocessed
         meta.category = "_Unprocessed"
         print(f"  [LOW_CONF] {meta.confidence:.2f} < {CONFIDENCE_THRESHOLD} "
               f"→ _Unprocessed")
@@ -266,17 +258,23 @@ def process_file(row: dict, dry_run: bool) -> None:
     # Перемещение файла
     dest_dir = NEW_ROOT / meta.category
     new_name = build_filename(meta, source_path)
-    
+
     try:
         final_dest = move_file(source_path, dest_dir, new_name, dry_run=dry_run)
         _save_result(source_path, final_dest, new_name, meta, llm_raw, dry_run)
-        
+
         status = "DRY" if dry_run else "OK"
         print(f"  [{status}] → {meta.category}/{new_name}")
-        
+
     except Exception as e:
         mark_error(str(source_path), f"move_error: {e}")
         print(f"  [ERROR/move] {e}")
+
+
+def OUTPUT_DIR_FOR_NEKNIGI() -> Path:
+    """_NeKnigi — истинный не-документ (код/лог/мусор), не путать с
+    _Unprocessed (это книга, просто низкая уверенность классификации)."""
+    return NEW_ROOT / "_NeKnigi"
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +285,7 @@ def print_stats() -> None:
     """Выводит статистику по базе данных."""
     stats = get_stats()
     total = sum(stats.values())
-    
+
     print("\n=== Статистика библиотеки ===")
     for status, count in sorted(stats.items()):
         print(f"  {status:12s}: {count:6d}")
@@ -304,44 +302,41 @@ def main() -> None:
         description="Library Sorter v3.0 — Упрощённая версия с ISBN lookup"
     )
     parser.add_argument(
-        "--execute", 
+        "--execute",
         action="store_true",
         help="Реальное перемещение файлов (по умолчанию dry-run)"
     )
     parser.add_argument(
-        "--stats", 
+        "--stats",
         action="store_true",
         help="Показать статистику и выйти"
     )
     parser.add_argument(
-        "--scan-only", 
+        "--scan-only",
         action="store_true",
         help="Только сканировать файлы (не обрабатывать)"
     )
     parser.add_argument(
-        "--limit", 
-        type=int, 
+        "--limit",
+        type=int,
         default=0,
         help="Максимум файлов за запуск (0 = без ограничений)"
     )
     parser.add_argument(
-        "--source", 
-        type=str, 
+        "--source",
+        type=str,
         default="",
         help="Обработать только указанный источник"
     )
-    
+
     args = parser.parse_args()
 
-    # Инициализация БД
     init_db()
 
-    # Только статистика
     if args.stats:
         print_stats()
         return
 
-    # Режим работы
     dry_run = not args.execute
     if dry_run:
         print("[MODE] DRY-RUN — файлы НЕ перемещаются")
@@ -349,7 +344,6 @@ def main() -> None:
     else:
         print("[MODE] EXECUTE — файлы БУДУТ перемещены!\n")
 
-    # Фильтр источников
     sources = SOURCES
     if args.source:
         sources = [s for s in SOURCES if args.source in s.name]
@@ -357,14 +351,12 @@ def main() -> None:
             print(f"[ERROR] Источник '{args.source}' не найден")
             sys.exit(1)
 
-    # Сканирование
     scan_sources(sources)
 
     if args.scan_only:
         print_stats()
         return
 
-    # Обработка файлов
     limit = args.limit if args.limit > 0 else 10_000_000
     processed = 0
     batch_size = 50
@@ -374,15 +366,14 @@ def main() -> None:
     while processed < limit:
         fetch = min(batch_size, limit - processed)
         rows = get_pending(limit=fetch)
-        
+
         if not rows:
             break
 
         for row in rows:
             process_file(row, dry_run=dry_run)
             processed += 1
-            
-            # Прогресс каждые 10 файлов
+
             if processed % 10 == 0:
                 stats = get_stats()
                 print(f"\n{'='*60}")

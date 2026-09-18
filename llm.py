@@ -1,4 +1,4 @@
-﻿import re, unicodedata
+import re, unicodedata, difflib
 from pathlib import Path
 from typing import Optional, Union
 import os
@@ -22,7 +22,7 @@ CATEGORIES_STR = "\n".join(sorted(CATEGORIES))
 
 SYSTEM_PROMPT = f"""Ты - библиотекарь-эксперт. Анализируешь текст из начала книги и возвращаешь метаданные в JSON.
 
-ДОПУСТИМЫЕ КАТЕГОРИИ (выбери ОДНУ точно из этого списка):
+ДОПУСТИМЫЕ КАТЕГОРИИ (выбери ОДНУ точно из этого списка, включая символы подчёркивания):
 {CATEGORIES_STR}
 
 ПРАВИЛА:
@@ -31,13 +31,54 @@ SYSTEM_PROMPT = f"""Ты - библиотекарь-эксперт. Анализ
 3. author_last: только ФАМИЛИЯ транслитом. Примеры: Ivanov, Smith
 4. author_first: только ПЕРВАЯ БУКВА имени. Примеры: A, J
 5. year: только 4 цифры 1900-2030 или null
-6. language: определи язык текста
-7. Не книга (код, данные, логи) -> identified=false, skip_reason="not_a_book"
+6. language: строго двухбуквенный код ru/en/de/zh/ja/other — НИКОГДА полным словом
+   (не "Russian", не "русский" — только "ru")
+7. Не документ вовсе (исходный код программы, случайный лог, повреждённые
+   нечитаемые данные) -> identified=false, skip_reason="not_a_book"
 8. Неподдерживаемый язык -> identified=false, skip_reason="unsupported_language"
-9. ГОСТ/стандарты -> category="09_Справочники/01_ГОСТы"
-10. Журналы -> category="10_Журналы/..."
+9. ГОСТ/ОСТ/ТУ/стандарты -> identified=true, category="09_Справочники/01_ГОСТы"
+10. Типовой проект, техническая документация, чертёж, инструкция, руководство,
+    нормативный документ -> identified=true, категория по теме (обычно
+    01_Техника/... или 09_Справочники/...), НЕ not_a_book — это справочный
+    материал, который тоже нужно систематизировать, а не пропускать
+11. Журналы -> category="10_Журналы/..."
+12. Раздел "07_Военное_дело" — только уставы, наставления, тактика конкретного
+    боя, вооружение и техника. Политическая аналитика, публицистика,
+    геополитика, история войн как общественного явления (не боевые действия
+    как таковые) -> "06_История_Политика/..." (обычно 04_Политика или
+    05_Геополитика), а НЕ "07_Военное_дело"
 
 ВАЖНО: отвечай ТОЛЬКО валидным JSON без markdown-блоков."""
+
+LANGUAGE_ALIASES = {
+    "russian": "ru", "русский": "ru", "rus": "ru",
+    "english": "en", "английский": "en", "eng": "en",
+    "german": "de", "deutsch": "de", "немецкий": "de", "ger": "de",
+    "chinese": "zh", "китайский": "zh", "chi": "zh",
+    "japanese": "ja", "японский": "ja", "jap": "ja",
+}
+
+def _normalize_language(lang: Optional[str]) -> Optional[str]:
+    """Модель иногда возвращает язык полным словом вместо кода — приводим
+    к ожидаемому формату, чтобы не терять нормальные книги на SKIP/lang."""
+    if not lang:
+        return lang
+    key = lang.strip().lower()
+    return LANGUAGE_ALIASES.get(key, key)
+
+def _normalize_category(cat: Optional[str]) -> Optional[str]:
+    """Модель иногда промахивается мимо точного формата категории
+    (пробел вместо подчёркивания и т.п.) — пытаемся исправить автоматически
+    вместо того, чтобы терять файл на SKIP/invalid_cat."""
+    if not cat:
+        return cat
+    if cat in CATEGORIES:
+        return cat
+    fixed = cat.replace(" ", "_")
+    if fixed in CATEGORIES:
+        return fixed
+    close = difflib.get_close_matches(cat, CATEGORIES, n=1, cutoff=0.6)
+    return close[0] if close else cat
 
 def analyze_book(filename: str, text: str) -> BookMetadata:
     import ollama
@@ -60,8 +101,8 @@ def analyze_book(filename: str, text: str) -> BookMetadata:
     meta = BookMetadata.model_validate_json(raw)
     if meta.year is not None:
         meta.year = str(meta.year)
-    if not meta.category:
-        meta.category = "_Unprocessed"
+    meta.language = _normalize_language(meta.language)
+    meta.category = _normalize_category(meta.category) or "_Unprocessed"
     return meta
 
 TRANSLIT_TABLE = str.maketrans({
