@@ -85,6 +85,19 @@ def _normalize_language(lang: Optional[str]) -> Optional[str]:
     key = lang.strip().lower()
     return LANGUAGE_ALIASES.get(key, key)
 
+def _normalize_title(title: Optional[str]) -> Optional[str]:
+    """Первая буква названия — заглавная. В fb2/epub иногда встречается
+    название строчными буквами (как у "блок-пост") — не потому что в этом
+    заложен смысл, а просто так набрал автор/издатель файла. Настоящие
+    осознанные исключения (акцентные строчные начала) редки настолько,
+    что жертвовать ими ради единообразия подавляющего большинства случаев
+    оправданно."""
+    if not title:
+        return title
+    if title[0].isalpha() and title[0].islower():
+        return title[0].upper() + title[1:]
+    return title
+
 def _normalize_category(cat: Optional[str]) -> Optional[str]:
     if not cat:
         return cat
@@ -119,6 +132,7 @@ def analyze_book(filename: str, text: str) -> BookMetadata:
         meta.year = str(meta.year)
     meta.language = _normalize_language(meta.language)
     meta.category = _normalize_category(meta.category) or "_Unprocessed"
+    meta.title = _normalize_title(meta.title)
     return meta
 
 TRANSLIT_TABLE = str.maketrans({
