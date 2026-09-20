@@ -11,7 +11,18 @@ class BookMetadata(BaseModel):
     identified: bool = Field(description="Удалось ли идентифицировать книгу")
     author_last: Optional[str] = Field(None, description="Фамилия автора транслитом")
     author_first: Optional[str] = Field(None, description="Инициал имени, одна буква")
-    title: Optional[str] = Field(None, description="Название книги")
+    # ВАЖНО: title сделан ОБЯЗАТЕЛЬНЫМ (не Optional), намеренно. Иначе модель
+    # (gpt-oss:20b, think=False) на практике регулярно пропускает это поле
+    # молча, даже когда название прямым текстом стоит в исходнике (проверено
+    # на реальных fb2, где book-title лежит открытым тегом в title-info).
+    # Обязательное поле в JSON-схеме не даёт constrained-decoding в Ollama
+    # закрыть объект без значения — модель вынуждена его заполнить.
+    title: str = Field(description="Название книги. ОБЯЗАТЕЛЬНОЕ поле — если "
+                        "identified=true, здесь ДОЛЖНА быть точная строка "
+                        "названия из текста. Если книгу не идентифицировал "
+                        "(identified=false) — впиши короткое рабочее "
+                        "описание содержимого, не оставляй формальной пустой "
+                        "строкой без причины.")
     year: Optional[Union[str, int]] = Field(None, description="Год издания, 4 цифры")
     language: Optional[str] = Field(None, description="Язык: ru/en/de/zh/ja/other")
     category: Optional[str] = Field(default="_Unprocessed", description="Категория из списка допустимых")
@@ -47,6 +58,9 @@ SYSTEM_PROMPT = f"""Ты - библиотекарь-эксперт. Анализ
     геополитика, история войн как общественного явления (не боевые действия
     как таковые) -> "06_История_Политика/..." (обычно 04_Политика или
     05_Геополитика), а НЕ "07_Военное_дело"
+13. Поле title ОБЯЗАТЕЛЬНО непустое. Если identified=true — название должно
+    быть скопировано ТОЧНО из текста (часто уже готовое в теге book-title,
+    заголовке, на титульной странице — не придумывай заново, просто скопируй)
 
 ВАЖНО: отвечай ТОЛЬКО валидным JSON без markdown-блоков."""
 
@@ -59,17 +73,12 @@ LANGUAGE_ALIASES = {
 }
 
 def _normalize_language(lang: Optional[str]) -> Optional[str]:
-    """Модель иногда возвращает язык полным словом вместо кода — приводим
-    к ожидаемому формату, чтобы не терять нормальные книги на SKIP/lang."""
     if not lang:
         return lang
     key = lang.strip().lower()
     return LANGUAGE_ALIASES.get(key, key)
 
 def _normalize_category(cat: Optional[str]) -> Optional[str]:
-    """Модель иногда промахивается мимо точного формата категории
-    (пробел вместо подчёркивания и т.п.) — пытаемся исправить автоматически
-    вместо того, чтобы терять файл на SKIP/invalid_cat."""
     if not cat:
         return cat
     if cat in CATEGORIES:
