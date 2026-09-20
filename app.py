@@ -230,7 +230,7 @@ def process_file(row: dict, dry_run: bool) -> None:
     # в _NeKnigi, а не остаётся висеть во входной папке навсегда.
     if not meta.identified:
         reason = meta.skip_reason or "not_identified"
-        dest_dir = OUTPUT_DIR_FOR_NEKNIGI()
+        dest_dir = _neknigi_dir()
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest_path = dest_dir / source_path.name
         if not dry_run:
@@ -239,8 +239,19 @@ def process_file(row: dict, dry_run: bool) -> None:
         print(f"  [SKIP/{reason}] → _NeKnigi/{source_path.name}")
         return
 
-    # Проверка confidence
-    if meta.confidence < CONFIDENCE_THRESHOLD:
+    # Страховка: identified=True, но title пустой — подтверждено на реальных
+    # файлах, что gpt-oss:20b с think=False иногда полностью пропускает это
+    # поле, даже когда название стоит прямо в начале текста. Без title
+    # build_filename() соберёт имя только по фамилии — почти гарантированная
+    # коллизия между разными книгами одного автора (уже случалось: два
+    # разных файла получили одинаковое "Rzaeva_E-2003.pdf"). Не теряем файл,
+    # но и не даём ему шаткое, потенциально конфликтное имя — откладываем
+    # на ручной разбор в _Unprocessed вместе с обычными low-confidence.
+    if not meta.title:
+        print(f"  [NO_TITLE] title пуст при identified=True → _Unprocessed "
+              f"(имя по одной фамилии рискует конфликтовать)")
+        meta.category = "_Unprocessed"
+    elif meta.confidence < CONFIDENCE_THRESHOLD:
         meta.category = "_Unprocessed"
         print(f"  [LOW_CONF] {meta.confidence:.2f} < {CONFIDENCE_THRESHOLD} "
               f"→ _Unprocessed")
@@ -271,9 +282,9 @@ def process_file(row: dict, dry_run: bool) -> None:
         print(f"  [ERROR/move] {e}")
 
 
-def OUTPUT_DIR_FOR_NEKNIGI() -> Path:
+def _neknigi_dir() -> Path:
     """_NeKnigi — истинный не-документ (код/лог/мусор), не путать с
-    _Unprocessed (это книга, просто низкая уверенность классификации)."""
+    _Unprocessed (это книга, просто низкая уверенность или нет названия)."""
     return NEW_ROOT / "_NeKnigi"
 
 
