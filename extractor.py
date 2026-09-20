@@ -142,30 +142,61 @@ def _local_tag(tag: str) -> str:
     return tag.split('}')[-1] if '}' in tag else tag
 
 def _from_fb2(path: Path) -> str:
+    """
+    Название/автор/аннотация подписаны явными метками (как для mobi/epub) —
+    иначе модель на некоторых файлах (особенно с рваной, полной опечаток
+    аннотацией) сваливает все три поля в одну кучу и вместо названия
+    возвращает "ФИО автора + название + жанр + вся аннотация" одной строкой.
+    """
     import xml.etree.ElementTree as ET
     try:
         tree = ET.parse(path)
         root = tree.getroot()
-        parts = []
+
+        book_title = None
+        author = None
+        annotation = None
 
         for el in root.iter():
             name = _local_tag(el.tag)
-            if name in ("book-title", "author", "annotation"):
+            if name == "book-title" and not book_title:
                 text = "".join(el.itertext()).strip()
                 if text:
-                    parts.append(text)
+                    book_title = text
+            elif name == "author" and not author:
+                text = "".join(el.itertext()).strip()
+                if text:
+                    author = text
+            elif name == "annotation" and not annotation:
+                text = "".join(el.itertext()).strip()
+                if text:
+                    annotation = text
+
+        header_lines = []
+        if book_title:
+            header_lines.append(f"Название: {book_title}")
+        if author:
+            header_lines.append(f"Автор: {author}")
+        header = ("[Метаданные файла]\n" + "\n".join(header_lines) + "\n\n") if header_lines else ""
+
+        sections = []
+        if annotation:
+            sections.append(f"[Аннотация]\n{annotation}")
 
         p_count = 0
+        body_parts = []
         for el in root.iter():
             if _local_tag(el.tag) == "p":
                 text = "".join(el.itertext()).strip()
                 if text:
-                    parts.append(text)
+                    body_parts.append(text)
                     p_count += 1
                 if p_count >= 20:
                     break
+        if body_parts:
+            sections.append("[Текст начала книги]\n" + "\n".join(body_parts))
 
-        return _trim("\n".join(parts))
+        return _trim(header + "\n\n".join(sections))
     except ET.ParseError as e:
         print(f"  [WARN] FB2 parse error: {e}")
         return ""
