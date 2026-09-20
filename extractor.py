@@ -135,10 +135,7 @@ def _from_djvu(path):
 
 
 # ---------------------------------------------------------------------------
-# FB2 — прямой разбор XML, без внешних зависимостей.
-# Не полагаемся на конкретную версию namespace (2.0/2.1/3.0 и т.п.) — ищем
-# элементы по "локальному" имени тега, игнорируя namespace целиком, потому
-# что fb2-файлы из разных источников часто используют разные версии.
+# FB2
 # ---------------------------------------------------------------------------
 
 def _local_tag(tag: str) -> str:
@@ -151,7 +148,6 @@ def _from_fb2(path: Path) -> str:
         root = tree.getroot()
         parts = []
 
-        # Заголовок, автор, аннотация — откуда угодно в title-info
         for el in root.iter():
             name = _local_tag(el.tag)
             if name in ("book-title", "author", "annotation"):
@@ -159,7 +155,6 @@ def _from_fb2(path: Path) -> str:
                 if text:
                     parts.append(text)
 
-        # Первые ~20 абзацев тела книги
         p_count = 0
         for el in root.iter():
             if _local_tag(el.tag) == "p":
@@ -180,34 +175,87 @@ def _from_fb2(path: Path) -> str:
 
 
 # ---------------------------------------------------------------------------
-# EPUB — zip с HTML/XHTML внутри, без ebooklib.
+# Метаданные из content.opf (общие для EPUB и распакованного MOBI) —
+# стандартный XML-контейнер с dc:title/dc:creator/dc:identifier, который
+# несёт сам файл, в отличие от "текста на первых страницах", где вместо
+# названия книги нередко оказывается водяной знак сайта-источника,
+# благодарности донорам и т.п. "обложечный" шум перед реальным текстом.
+# ---------------------------------------------------------------------------
+
+def _parse_opf_metadata(opf_content: str) -> dict:
+    import xml.etree.ElementTree as ET
+    meta = {"title": None, "author": None, "isbn": None}
+    try:
+        root = ET.fromstring(opf_content)
+        for el in root.iter():
+            name = _local_tag(el.tag)
+            text = (el.text or "").strip()
+            if not text:
+                continue
+            if name == "title" and not meta["title"]:
+                meta["title"] = text
+            elif name == "creator" and not meta["author"]:
+                meta["author"] = text
+            elif name == "identifier" and not meta["isbn"]:
+                digits = re.sub(r"[^0-9Xx]", "", text)
+                if len(digits) in (10, 13):
+                    meta["isbn"] = digits
+    except Exception:
+        pass
+    return meta
+
+def _format_metadata_header(meta: dict) -> str:
+    lines = []
+    if meta.get("title"):
+        lines.append(f"Название: {meta['title']}")
+    if meta.get("author"):
+        lines.append(f"Автор: {meta['author']}")
+    if meta.get("isbn"):
+        lines.append(f"ISBN: {meta['isbn']}")
+    if not lines:
+        return ""
+    return "[Метаданные файла]\n" + "\n".join(lines) + "\n\n[Текст начала книги]\n"
+
+
+# ---------------------------------------------------------------------------
+# EPUB — zip с HTML/XHTML внутри + свои метаданные из *.opf.
 # ---------------------------------------------------------------------------
 
 def _from_epub(path: Path) -> str:
     try:
         with zipfile.ZipFile(path) as z:
-            html_files = [n for n in z.namelist()
-                          if n.lower().endswith((".html", ".xhtml", ".htm"))]
-            if not html_files:
+            names = z.namelist()
+
+            header = ""
+            opf_names = [n for n in names if n.lower().endswith(".opf")]
+            if opf_names:
+                try:
+                    opf_content = z.read(opf_names[0]).decode("utf-8", errors="ignore")
+                    header = _format_metadata_header(_parse_opf_metadata(opf_content))
+                except Exception:
+                    pass
+
+            html_files = [n for n in names if n.lower().endswith((".html", ".xhtml", ".htm"))]
+            if not html_files and not header:
                 return ""
-            # Берём первые несколько файлов — обычно титул + начало текста
+
             chunks = []
             for name in html_files[:3]:
                 content = z.read(name).decode("utf-8", errors="ignore")
                 text = re.sub(r"<[^>]+>", " ", content)
                 text = re.sub(r"\s+", " ", text)
                 chunks.append(text)
-            return _trim(" ".join(chunks))
+
+            return _trim(header + " ".join(chunks))
     except Exception as e:
         print(f"  [WARN] EPUB error: {e}")
         return ""
 
 
 # ---------------------------------------------------------------------------
-# MOBI — через пакет `mobi` (pip install mobi), без Calibre.
-# Известное ограничение: сильно защищённые/нестандартные .azw/.mobi файлы
-# этот пакет может не осилить — тогда вернётся "" и файл уйдёт в
-# no_text_extracted, как и любой другой нечитаемый файл.
+# MOBI — через пакет `mobi`. Распаковка кладёт рядом с book.html файл
+# content.opf с теми же метаданными, что видит Calibre — читаем его,
+# прежде чем брать текст.
 # ---------------------------------------------------------------------------
 
 def _from_mobi(path: Path) -> str:
@@ -223,12 +271,24 @@ def _from_mobi(path: Path) -> str:
         return ""
     try:
         extracted = Path(filepath)
+
         if extracted.suffix.lower() == ".epub":
             return _from_epub(extracted)
+
+        header = ""
+        opf_path = extracted.parent / "content.opf"
+        if opf_path.exists():
+            try:
+                opf_content = opf_path.read_text(encoding="utf-8", errors="ignore")
+                header = _format_metadata_header(_parse_opf_metadata(opf_content))
+            except Exception:
+                pass
+
         content = extracted.read_text(encoding="utf-8", errors="ignore")
-        text = re.sub(r"<[^>]+>", " ", content)
-        text = re.sub(r"\s+", " ", text)
-        return _trim(text)
+        body = re.sub(r"<[^>]+>", " ", content)
+        body = re.sub(r"\s+", " ", body).strip()
+
+        return _trim(header + body)
     except Exception as e:
         print(f"  [WARN] MOBI read error: {e}")
         return ""
