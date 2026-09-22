@@ -9,6 +9,7 @@ app.py — Library Sorter v3.0
    Уверенность < 0.70 → _Unprocessed
 """
 import argparse
+import re
 import sys
 import shutil
 from pathlib import Path
@@ -26,6 +27,35 @@ from extractor import extract_text
 from isbn_lookup import search_isbn_in_text, ISBNBookData
 from llm import analyze_book, build_filename, BookMetadata
 from mover import move_file
+
+
+# ---------------------------------------------------------------------------
+# Детекция возможного многотомника (раздел 11.2 ТЗ)
+# ---------------------------------------------------------------------------
+# Подстраховка на случай, если один том серии попал в общий поток на входе
+# (основной сценарий — пользователь сам держит тома вместе, вне лотка, но
+# страховка нужна на случай, если что-то всё же просочилось). Файл в этом
+# случае НЕ должен молча уйти в обычную тематическую категорию — по решению
+# из раздела 11.2 он просто помечается отдельным skip_reason в БД, физически
+# не трогается (остаётся в источнике для ручного просмотра).
+MULTIVOLUME_PATTERNS = [
+    r"\bтом\s*[ivxlcdm]+\b",
+    r"\bтом\s*\d+\b",
+    r"\bчасть\s*[ivxlcdm]+\b",
+    r"\bчасть\s*\d+\b",
+    r"\bкнига\s*\d+\b",
+    r"\bvol\.?\s*\d+\b",
+    r"\bvolume\s*\d+\b",
+    r"\bbook\s+(?:[ivxlcdm]+|\d+)\b",
+]
+_MULTIVOLUME_RE = re.compile("|".join(MULTIVOLUME_PATTERNS), re.IGNORECASE)
+
+
+def _detect_multivolume(title: str | None) -> bool:
+    """True, если title содержит паттерн вида 'Том N'/'Часть N'/'vol.'/'Book II'."""
+    if not title:
+        return False
+    return bool(_MULTIVOLUME_RE.search(title))
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +267,17 @@ def process_file(row: dict, dry_run: bool) -> None:
             shutil.move(str(source_path), str(dest_path))
         mark_skipped(str(source_path), reason, llm_raw)
         print(f"  [SKIP/{reason}] → _NeKnigi/{source_path.name}")
+        return
+
+    # Подстраховка на случай одиночного тома многотомника, попавшего в общий
+    # поток (раздел 11.2 ТЗ). Проверяем ДО страховки на пустой title и ДО
+    # проверки confidence — иначе такой файл рискует молча утонуть в
+    # _Unprocessed с обычным skip_reason и потеряться среди остальных
+    # low-confidence файлов, вместо явного отдельного маркера для ручного
+    # просмотра. Файл физически не трогаем — только помечаем в БД.
+    if _detect_multivolume(meta.title):
+        mark_skipped(str(source_path), "possible_multivolume", llm_raw)
+        print(f"  [SKIP/possible_multivolume] {meta.title!r}")
         return
 
     # Страховка: identified=True, но title пустой — подтверждено на реальных
