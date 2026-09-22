@@ -23,3 +23,6 @@ duplicates*
 .env.local
 poppler/
 poppler_bin/
+check_skipped.py
+check_titles.py
+check_titles.py
