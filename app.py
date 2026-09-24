@@ -131,7 +131,19 @@ def _classify_isbn_book(isbn_data: ISBNBookData, filename: str) -> str:
 
 def _save_result(source_path: Path, final_dest: Path, new_name: str,
                  meta: BookMetadata, llm_raw: str, dry_run: bool) -> None:
-    """Сохраняет результат обработки в БД."""
+    """Сохраняет результат обработки в БД.
+
+    БАГ, обнаруженный на практике (2026-09-23): dry_run принимался, но не
+    использовался — mark_processed() вызывался безусловно, даже когда файл
+    физически никуда не переехал. В итоге каждый пробный прогон писал в БД
+    status='processed' с dest_path, которого не существует, и следующий
+    --execute тихо пропускал эти файлы как "уже обработанные" (get_pending
+    берёт только status='pending'). Теперь при dry_run в БД вообще ничего
+    не пишем — файл остаётся pending, как будто прогона и не было.
+    """
+    if dry_run:
+        return
+
     mark_processed(
         source_path=str(source_path),
         dest_path=str(final_dest),
