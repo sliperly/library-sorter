@@ -13,6 +13,16 @@ reset_returned_files.py — для случая, когда вы вручную 
 """
 import argparse
 import sqlite3
+import sys
+from pathlib import Path
+
+# Скрипт лежит в tools/, а config.py — в корне проекта. При запуске вида
+# "python tools/reset_returned_files.py" Python добавляет в sys.path папку
+# САМОГО скрипта (tools/), а не текущую рабочую директорию — поэтому без
+# этой строчки "from config import ..." падает с ModuleNotFoundError,
+# даже если вы стоите в корне проекта и venv активирован правильно.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from config import DB_PATH, SOURCES
 
 
